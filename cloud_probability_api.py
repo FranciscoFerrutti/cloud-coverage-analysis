@@ -143,17 +143,46 @@ class CloudProbabilityAPI:
             )
         )
 
+        combined_reducer = (
+            ee.Reducer.mean()
+            .combine(ee.Reducer.stdDev(), sharedInputs=True)
+            .combine(ee.Reducer.percentile([25, 50, 75]), sharedInputs=True)
+        )
+
         stats = fc.reduceColumns(
-            reducer=ee.Reducer.mean().combine(
-                ee.Reducer.stdDev(), sharedInputs=True
-            ),
+            reducer=combined_reducer,
             selectors=["cloud_percentage"],
         ).getInfo()
 
         return {
             "mean": stats.get("mean", 0.0),
             "std": stats.get("stdDev", 0.0),
+            "p25": stats.get("p25", 0.0),
+            "median": stats.get("p50", 0.0),
+            "p75": stats.get("p75", 0.0),
         }
+
+
+    def get_usable_image_probability(
+            self, target_date: datetime, window_days: int = 15, max_clouds: float = 20.0
+        ) -> float:
+            """
+            Calculates the historical probability (0-100%) of acquiring an image 
+            with cloud coverage less than or equal to `max_clouds`.
+            """
+            with_pct = self._collection_with_cloud_pct(target_date, window_days)
+            
+            total_images = with_pct.size()
+            
+            usable_images = with_pct.filter(ee.Filter.lte("cloud_percentage", max_clouds)).size()
+            
+            probability = ee.Algorithms.If(
+                total_images.gt(0),
+                usable_images.divide(total_images).multiply(100),
+                0
+            )
+            
+            return probability.getInfo()
 
     def get_similar_images(
         self, target_date: datetime, n: int = 5, window_days: int = 15
